@@ -1,3 +1,4 @@
+from librosa.effects import harmonic, percussive
 import librosa.feature as ft
 import librosa
 from librosa.feature.spectral import mfcc
@@ -5,6 +6,16 @@ import numpy as np
 import pandas as pd
 import uuid
 import os
+from tqdm import tqdm
+
+
+def compute_power_db(y, sr, win_len_sec=0.2, power_ref=10**(-12)):
+    
+    win_len = round(win_len_sec * sr)
+    win = np.ones(win_len) / win_len
+    power_db = 10 * np.log10(np.convolve(y**2, win, mode='same') / power_ref)
+    return power_db
+
 
 
 class AudioFeatureExtractor:
@@ -39,7 +50,7 @@ class AudioFeatureExtractor:
 
     def build_30s_dataset(self):
         dataset = []
-        for filename in os.listdir(self.root_path):
+        for filename in tqdm(os.listdir(self.root_path)):
             if '.wav' in filename:
                 file_uuid = uuid.uuid1()
                 y, sr = librosa.load(
@@ -69,15 +80,29 @@ class AudioFeatureExtractor:
                 spectral_rolloff_std = np.std(spectral_rolloff)
                 len_s = librosa.get_duration(y)
 
-                features = [filename.split('.')[0], file_uuid, len_s, zcr, tempo[0], rmsmean, rmsstd, spectral_centroid_mean, spectral_centroid_std,
+                power_db = compute_power_db(y,sr)
+                dynamic_range = np.max(power_db) - np.min(power_db)
+
+                harmonic_elements = librosa.effects.harmonic(y)
+                percussive_elements = librosa.effects.percussive(y)
+
+                HPR = len(np.where(harmonic_elements>0.00001)[0])/len(np.where(percussive_elements>0.00001)[0])
+                
+
+                harmonic_rms = np.mean(ft.rms(harmonic_elements,sr))
+                percussive_rms = np.mean(ft.rms(percussive_elements,sr))
+
+
+
+                features = [filename.split('.')[0], file_uuid, len_s, zcr, tempo[0], dynamic_range, rmsmean, rmsstd,harmonic_rms,percussive_rms, spectral_centroid_mean, spectral_centroid_std, HPR,
                             spectral_bandwidth_mean, spectral_bandwidth_std, spectral_rolloff_mean, spectral_rolloff_std, np.mean(chroma_stft), np.std(chroma_stft), np.mean(chroma_cens), np.std(chroma_cens), np.mean(spectral_contrast), np.std(spectral_contrast), np.mean(spectral_flatness), np.std(spectral_flatness)]
 
                 for k in range(len(mfccsstd)):
                     features.append(mfccsmean[k])
                     features.append(mfccsstd[k])
                 dataset.append(features)
-        columns = ['filename', 'uuid', 'duration    ', 'zero_crossing_rate', 'tempo', 'rms_mean', 'rms_std', 'spectral_centroid_mean',
-                   'spectral_centroid_std', 'spectral_bandwidth_mean', 'spectral_bandwidth_std', 'spectral_rolloff_mean', 'spectral_rolloff_std', 'chroma_stft_mean', 'chroma_stft_std', 'chroma_cens_mean', 'chroma_cens_std', 'spectral_contrast_mean', 'spectral_contrast_std', 'spectral_flatness_mean', 'spectral_flatness_std']
+        columns = ['filename', 'uuid', 'duration', 'zero_crossing_rate', 'tempo','dynamic_range', 'rms_mean', 'rms_std','harmonic_rms','percussive_rms', 'spectral_centroid_mean',
+                   'spectral_centroid_std', 'HPR','spectral_bandwidth_mean', 'spectral_bandwidth_std', 'spectral_rolloff_mean', 'spectral_rolloff_std', 'chroma_stft_mean', 'chroma_stft_std', 'chroma_cens_mean', 'chroma_cens_std', 'spectral_contrast_mean', 'spectral_contrast_std', 'spectral_flatness_mean', 'spectral_flatness_std']
         for k in range(len(mfccsmean)):
             columns.append(f'mfcc_{k}_mean')
             columns.append(f'mfcc_{k}_std')
